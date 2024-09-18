@@ -9,10 +9,12 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Koneksi ke MongoDB
+// Koneksi ke MongoDB dengan penambahan opsi timeout
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 30000, // Set timeout menjadi 30 detik
+  socketTimeoutMS: 45000, // Set timeout soket menjadi 45 detik
 }).then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB connection error:', err));
 
@@ -22,23 +24,29 @@ app.post('/callback', async (req, res) => {
   console.log('Received callback:', req.body);
 
   try {
+    // Cari deposit berdasarkan unique_code
     const deposit = await Deposit.findOne({ uniqueCode: unique_code });
     if (!deposit) {
       console.error('Deposit not found for unique_code:', unique_code);
       return res.status(404).send('Deposit not found');
     }
 
+    // Jika status sukses, proses deposit
     if (status === 'Success') {
       deposit.status = 'BERHASIL ✅';
+      
+      // Cari user berdasarkan userId dari deposit
       const user = await User.findOne({ userId: deposit.userId });
       if (!user) {
         console.error('User not found for userId:', deposit.userId);
         return res.status(404).send('User not found');
       }
+
+      // Tambahkan saldo ke akun user
       user.saldo += deposit.amount;
       await user.save();
 
-      // Kirim pesan ke bot menggunakan bot token
+      // Kirim pesan ke bot Telegram
       const chatId = deposit.userId;
       const message = `╭──── 〔 *DEPOSIT BERHASIL* 〕
 ┊・ 🏷️| Jumlah Deposit: Rp ${deposit.amount}
@@ -54,12 +62,16 @@ app.post('/callback', async (req, res) => {
 ╰┈┈┈┈┈┈┈┈`;
 
       const botToken = process.env.BOT_TOKEN;
-      await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        chat_id: chatId,
-        text: message,
-        parse_mode: 'Markdown', // Pastikan format Markdown diterima
-      });
-      console.log(`Deposit successful message sent to ${chatId}`);
+      try {
+        await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          chat_id: chatId,
+          text: message,
+          parse_mode: 'Markdown',
+        });
+        console.log(`Deposit successful message sent to ${chatId}`);
+      } catch (sendError) {
+        console.error('Error sending Telegram message:', sendError);
+      }
     } else {
       deposit.status = 'failed';
     }
@@ -77,4 +89,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Callback server is running on port ${PORT}`);
 });
-         
